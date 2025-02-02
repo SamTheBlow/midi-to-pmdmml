@@ -1,0 +1,1314 @@
+<!--
+MIDI to PMD MML (OPNA) converter
+by SamDb
+
+Contact: pokeyoshi@hotmail.com
+All users are free to send feedback, questions, etc.
+
+NO CREDIT REQUIRED. Please credit the MIDI file's creator, if applicable.
+-->
+<!DOCTYPE html>
+<html>
+<style>
+h1 {
+	font-family: sans-serif;
+    font-size: 48px;
+}
+h2 {
+	font-family: sans-serif;
+	font-size: 40px;
+	font-weight: normal;
+	height: 1em;
+}
+p {
+	margin: 0;
+}
+table {
+	margin: auto;
+	margin-top: 0;
+	margin-bottom: 0;
+	padding: 1em;
+	text-align: left;
+}
+td {
+	padding-left: 1em;
+	padding-right: 1em;
+}
+</style>
+<head>
+  <meta charset="utf-8">
+  <title>mid2pmd</title>
+</head>
+<body>
+	<div style="text-align: center">
+		<h1>Convert a MIDI file into PMD MML (OPNA)</h1>
+		<h2 style="display: none" id="progress"></h2>
+	</div>
+	<div style="text-align: center" id="settings">
+		<label for="loadButton">Select MIDI File: </label><input onchange="loadFile()" id="loadButton" type="file"><br><br>
+		<br><br>
+		<label for="drumSelect">Track to convert as drums: </label>
+		<select onchange="handleDrumTrackSelect()" id="drumSelect" disabled>
+			<option value="none">None</option>
+			<option value="specific">Specific track</option>
+			<option value="largest" selected>Largest in memory size</option>
+			<option value="all">All</option>
+		</select>
+		<input style="display: none" oninput="toggleConvertButton()" type="number" id="drumTrack" value="10" size="6">
+		<p style="display: none" id="largestTrack"></p>
+		<br><br>
+		<input type="checkbox" id="loopFlag" checked><label for="loopFlag">Loop</label><br><br>
+		<input title="If disabled, only the first 8 non-empty tracks will be converted, and the result will be formatted so that it is playable right away. ALL TEMPO CHANGES WILL BE DISCARDED!" type="checkbox" id="allTracksFlag"><label for="allTracksFlag">Convert all tracks</label><br><br>
+		<br><br>
+		<button type="button" onclick="toggleDrumSettings()" id="drumSettingsButton">Open Drum Settings</button><br><br>
+		<div style="display: none; margin: auto; margin-top: 0; margin-bottom: 1em; padding: 2em; width: 50%; border: 1px dotted black;" id="drumSettings"></div>
+		<button type="button" onclick="toggleAdvancedSettings()" id="advancedSettingsButton">Open Advanced Settings</button><br><br>
+		<div style="display: none; margin: auto; margin-top: 0; margin-bottom: 1em; padding: 2em; width: 50%; border: 1px dotted black;" id="advancedSettings">
+			<!--<label for="lineBreakSelect">Line breaks: </label>
+			<select onchange="handleLineBreakSelect()" id="lineBreakSelect">
+				<option value="none">None</option>
+				<option value="fourBars">Every 4 bars</option>
+				<option value="eightBars">Every 8 bars</option>
+				<option value="sixteenBars">Every 16 bars</option>
+			</select><br><br>-->
+			<label for="multipleNoteSelect">If multiple notes play at the same time, use: </label>
+			<select id="multipleNoteSelect">
+				<option value="high">The highest note</option>
+				<option value="low" selected>The lowest note</option>
+				<option value="first">The first note found</option>
+				<option value="last">The last note found</option>
+			</select><br><br>
+			<input title="This greatly reduces the size of the resulting file, at the cost of readability." type="checkbox" id="clockNotationFlag" checked><label for="commentsFlag">Use clock cycles notation</label><br><br>
+			<br><br>
+			<input type="checkbox" id="commentsFlag" checked><label for="commentsFlag">Convert text</label><br><br>
+			<input type="checkbox" id="noEmptyTracksFlag" checked><label for="noEmptyTracksFlag">Delete empty tracks</label><br><br>
+			<!--
+			<input title="If enabled, all tempo changes will be moved to their own separate track." type="checkbox" id="tempoMapFlag" checked><label for="tempoMapFlag">Create tempo map</label><br><br>
+			-->
+			<br><br>
+			<input type="checkbox" id="clearLogsFlag" checked><label for="clearLogsFlag">Automatically clear logs</label><br><br>
+			<input type="checkbox" id="debugFlag"><label for="debugFlag">Debug Mode</label>
+		</div>
+		<button style="margin: 1em; font-size: 32px; padding-left: 1em; padding-right: 1em;" type="button" onclick="convert()" id="convert" disabled>Convert</button>
+	</div>
+	<!--<div style="display: none; margin: 1em" id="result">
+		<canvas style="border:1px solid #000000;" id="myCanvas" width="1024" height="128"></canvas>
+	</div>-->
+	<div style="margin: 1em">
+		<button style="display: none; margin-top: 1em; margin-bottom: 1em;" type="button" onclick="clearLogs()" id="clearLogsButton">Clear Logs</button>
+		<div id="log"></div>
+	</div>
+	<div id="metaInfo"></div>
+	<div style="text-align: center; margin: 2em; font-size: 18px; font-family: sans-serif;"><a style="text-decoration-line: none" href="#top" class="bookmark" id="backToTop">Top of Page</a></div>
+<script>
+//From easiest to hardest (roughly):
+//TODO Option to automatically remove silence found at start and/or end of song
+//TODO Implement ability to play shorter notes than 96ths
+//TODO Find elegant solution to converting note lengths into more intuitive ones (e.g. c3&x24 should be c8&x16)
+//TODO Option to automatically map FM & SSG instruments using Midi patch numbers
+//TODO Automatically set the individual volume & panning of each drum instrument (see section 14.3 in the docs)
+//TODO Option to automatically split up tracks that have overlaying notes
+//TODO Option to automatically split MML into lines of 4/8/16 bars
+//TODO Implement advanced mixing commands (I will need help)
+//TODO Automatically move tempo changes to non-empty track (this is kinda important...)
+//TODO Option to automatically find repeating patterns and create macros
+//Note: there are more TODOs to be found throughout the code
+
+//Documentation on MIDI: http://www.music.mcgill.ca/~ich/classes/mumt306/StandardMIDIfileformat.html
+//Documentation on PMD MML: https://pigu-a.github.io/pmddocs/pmdmml.htm
+
+	//Constants
+	const version = "May 25th, 2022";
+	
+	const midi_drum_inst = ["Acoustic Bass Drum",
+	"Bass Drum 1", "Side Stick", "Acoustic Snare", "Hand Clap", "Electric Snare", "Low Floor Tom", "Closed Hi Hat", "High Floor Tom", "Pedal Hi-Hat", "Low Tom", "Open Hi-Hat", "Low-Mid Tom",
+	"Hi Mid Tom", "Crash Cymbal 1", "High Tom", "Ride Cymbal 1", "Chinese Cymbal", "Ride Bell", "Tambourine", "Splash Cymbal", "Cowbell", "Crash Cymbal 2", "Vibraslap", "Ride Cymbal 2",
+	"Hi Bongo", "Low Bongo", "Mute Hi Conga", "Open Hi Conga", "Low Conga", "High Timbale", "Low Timbale", "High Agogo", "Low Agogo", "Cabasa", "Maracas", "Short Whistle",
+	"Long Whistle", "Short Guiro", "Long Guiro", "Claves", "Hi Wood Block", "Low Wood Block", "Mute Cuica", "Open Cuica", "Mute Triangle", "Open Triangle"];
+	const default_drum_map = [1, 1, 32, 2, 0, 64, 4, 128, 4, 128, 8, 256, 8, 16, 512, 16, 1024, 0, 0, 0, 0, 0, 512, 0, 1024, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+	let pmdDrumMap = default_drum_map;
+	
+	const midi_default_tempo = 120;
+	const pmd_default_octave = 4;
+	const pmd_default_velocity = 108;
+	const pmd_default_panning = 0;
+	const pmd_default_noteLength = 96;
+	
+	//MIDI file info
+	let midiFormat = 0;
+	let numberOfTracks = 0;
+	let headerChunkLength = 0;
+	let trackChunkLength = [];
+	let largestTrack = 0;
+	let ticksPerQuarterNote = 0;
+	
+	window.onload = function(){
+		document.getElementById('metaInfo').innerHTML = "Contact: pokeyoshi@hotmail.com<br><br>Version: " + version;
+		if (document.getElementById('loadButton').value != "") loadFile();
+		createDrumSettings(document.getElementById('drumSettings'));
+	}
+	
+	function disableDrumSelect(){
+		document.getElementById("drumSelect").disabled = true;
+		document.getElementById("drumTrack").style.display = 'none';
+		document.getElementById("largestTrack").style.display = 'none';
+	}
+	
+	function handleDrumTrackSelect(){
+		let element = document.getElementById("drumSelect");
+		if (element.value == "specific"){
+			document.getElementById("drumTrack").style.display = 'inline';
+		}
+		else{
+			document.getElementById("drumTrack").style.display = 'none';
+		}
+		if (element.value == "largest"){
+			document.getElementById("largestTrack").innerHTML = "=> Track " + largestTrack.toString();
+			document.getElementById("largestTrack").style.display = 'inline';
+		}
+		else{
+			document.getElementById("largestTrack").style.display = 'none';
+		}
+		toggleConvertButton();
+	}
+	
+	function drumTrackIsValid(){
+		let element = document.getElementById("drumTrack");
+		let value = parseInt(element.value, 10);
+		if (isNaN(value) || value < 1 || value > trackChunkLength.length){
+			element.style.border = 'solid red';
+			if (document.getElementById("drumSelect").value == "specific") return false;
+		}
+		else{
+			element.value = value;
+			element.style.border = 'solid lime';
+		}
+		return true;
+	}
+	
+	function toggleConvertButton(){
+		let input = document.getElementById("loadButton");
+		if (drumTrackIsValid() == false || input.value == ""){
+			document.getElementById("convert").disabled = true;
+			return;
+		}
+		document.getElementById("convert").disabled = false;
+	}
+	
+	function toggleDrumSettings(){
+		let drumSettings = document.getElementById("drumSettings");
+		if (drumSettings.style.display != 'none'){
+			drumSettings.style.display = 'none';
+			document.getElementById("drumSettingsButton").innerHTML = "Open Drum Settings";
+		}
+		else{
+			drumSettings.style.display = 'block';
+			document.getElementById("drumSettingsButton").innerHTML = "Close Drum Settings";
+		}
+	}
+	
+	function toggleAdvancedSettings(){
+		let advancedSettings = document.getElementById("advancedSettings");
+		if (advancedSettings.style.display != 'none'){
+			advancedSettings.style.display = 'none';
+			document.getElementById("advancedSettingsButton").innerHTML = "Open Advanced Settings";
+		}
+		else{
+			advancedSettings.style.display = 'block';
+			document.getElementById("advancedSettingsButton").innerHTML = "Close Advanced Settings";
+		}
+	}
+	
+	function createDrumSettings(drumSettings){
+		drumSettings.innerHTML += "<div style=\"padding: 1em;\"><p style=\"font-size: 18px;\">This window lets you map MIDI drum instruments to PMD drum instruments.</p><br>" +
+		"<p style=\"font-size: 14px\">A value of 0 means that the instrument will be discarded.</p>" +
+		"<p style=\"font-size: 14px\">You can map a MIDI instrument to more than one PMD instrument by adding values together. (e.g. 128 + 1 = 129)</p>" +
+		"</div><table>" + 
+		"<th style=\"text-align: center; font-size: 24px; height: 2em;\" colspan=\"2\">Instrument Numbers</th>" +
+		"<tr><td>@1</td><td>Bass Drum</td></tr>" +
+		"<tr><td>@2</td><td>Snare Drum 1</td></tr>" +
+		"<tr><td>@4</td><td>Low Tom</td></tr>" +
+		"<tr><td>@8</td><td>Middle Tom</td></tr>" +
+		"<tr><td>@16</td><td>High Tom</td></tr>" +
+		"<tr><td>@32</td><td>Rim Shot</td></tr>" +
+		"<tr><td>@64</td><td>Snare Drum 2</td></tr>" +
+		"<tr><td>@128</td><td>Hi-Hat Close</td></tr>" +
+		"<tr><td>@256</td><td>Hi-Hat Open</td></tr>" +
+		"<tr><td>@512</td><td>Crash Cymbal</td></tr>" +
+		"<tr><td>@1024</td><td>Ride Cymbal</td></tr>" +
+		"</table>" +
+		"<table id=\"drumMap\"></table>";
+		let drumMap = document.getElementById("drumMap");
+		for (let i = 81; i >= 35; i--){
+			let id = "drumSettings" + i.toString();
+			let noteInfo = getMidiNoteInfo(i, true);
+			drumMap.innerHTML += "<tr><td>" + noteInfo[0] + noteInfo[1].toString() + "</td><td><label style=\"margin: 1em\" for=\"" + id + "\">" + midi_drum_inst[i - 35] +"</label></td><td><input oninput=\"validateDrumValue(" + i.toString() + ")\" type=\"number\" id=\"" + id + "\" value=\"" + pmdDrumMap[i - 35].toString() + "\" size=\"6\"></td></tr>";
+		}
+	}
+	
+	function validateDrumValue(index){
+		let element = document.getElementById("drumSettings" + index.toString());
+		let value = parseInt(element.value, 10);
+		if (isNaN(value) || value < 0 || value > 2047){
+			element.value = default_drum_map[index - 35];
+		}
+		else{
+			element.value = value;
+		}
+	}
+	
+	function editDrumMap(index, value){
+		pmdDrumMap[index] = value;
+	}
+	
+	//Loads file
+	async function loadFile(){
+		let input = document.getElementById("loadButton");
+		let file = input.files[0];
+		let logs = document.getElementById("log");
+		document.getElementById("convert").disabled = true;
+		disableDrumSelect();
+		
+		trackChunkLength = [];
+		
+		if (logs.innerHTML != "") logs.innerHTML += "<br>";
+		log(file.name, "lime");
+		try {
+			await readHeaderChunk();
+		}
+		catch(e) {
+			error(e.message);
+			input.value = "";
+			return;
+		}
+		for (let i = 0, c = 8 + headerChunkLength; i < numberOfTracks; i++){
+			try {
+				await readTrackLength(c);
+				c += 8 + trackChunkLength[i];
+				if (i == 0) { largestTrack = 1; }
+				else { if (trackChunkLength[i] > trackChunkLength[largestTrack - 1]) largestTrack = i + 1; }
+			}
+			catch(e) {
+				error(e.message);
+				input.value = "";
+				return;
+			}
+		}
+		log("Ready", "lime");
+		handleDrumTrackSelect();
+		document.getElementById("drumSelect").disabled = false;
+		
+		async function readHeaderChunk(){
+			let buffer = new Uint8Array(await readFileAsync(file.slice(4, 8)));
+			
+			let cursor = 0;
+			for (let i = 0; i < 4; i++){
+				cursor += (buffer[3 - i] << (8 * i));
+			}
+			
+			if (cursor < 6 || (8 + cursor) >= file.size){
+				throw new Error("Bad header length. (Are you sure this is a MIDI file?)");
+			}
+			
+			headerChunkLength = cursor;
+			log("Header chunk length: " + cursor.toString(), "white");
+			
+			cursor += 8;
+			buffer = new Uint8Array(await readFileAsync(file.slice(8, cursor)));
+			
+			midiFormat = (buffer[0] << 8) + buffer[1];
+			log("MIDI format: " + midiFormat.toString(), "white");
+			if (midiFormat != 1){
+				throw new Error("This tool currently only works with MIDI format 1.");
+			}
+			
+			numberOfTracks = (buffer[2] << 8) + buffer[3];
+			log("Number of tracks: " + numberOfTracks.toString(), "white");
+			if (numberOfTracks < 1){
+				throw new Error("Found invalid number of tracks. Your file might be corrupted.");
+			}
+			
+			ticksPerQuarterNote = (buffer[4] << 8) + buffer[5];
+			if (buffer[4] >= 128){
+				throw new Error("This file uses MIDI Time Code format, which this tool does not currently support.");
+			}
+			else{
+				log("Ticks per quarter note: " + ticksPerQuarterNote.toString(), "white");
+			}
+		}
+		
+		async function readTrackLength(cursor){
+			if (cursor >= file.size){
+				throw new Error("A problem occured while trying to load track information. Your file might be corrupted.");
+			}
+			
+			cursor += 4;
+			let buffer = new Uint8Array(await readFileAsync(file.slice(cursor, cursor + 4)));
+			
+			let chunkLength = 0;
+			for (let i = 0; i < 4; i++){
+				chunkLength += (buffer[3 - i] << (8 * i));
+			}
+			
+			if (chunkLength < 4 || chunkLength >= file.size){
+				throw new Error("Found invalid chunk length. Your file might be corrupted.");
+			}
+			
+			trackChunkLength.push(chunkLength);
+		}
+	}
+	
+	//Converts MIDI to PMD MML
+	async function convert(){
+        let input = document.getElementById("loadButton");
+		let file = input.files[0];
+		
+		let settings = document.getElementById("settings");
+		let progress = document.getElementById("progress");
+		if (document.getElementById("log").innerHTML != "") document.getElementById("log").innerHTML += "<br>";
+		settings.style.display = 'none';
+		progress.style.display = 'block';
+		progress.innerHTML = "";
+		//document.getElementById("result").innerHTML = "";
+		
+		let drumOption = document.getElementById("drumSelect").value;
+		let drumTrackMIDI = 0;
+		if (drumOption == "specific") drumTrackMIDI = document.getElementById("drumTrack").value;
+		else if (drumOption == "largest") drumTrackMIDI = largestTrack;
+		let loopSong = document.getElementById("loopFlag").checked;
+		let convertAllTracks = document.getElementById("allTracksFlag").checked;
+		let multipleNoteChoice = document.getElementById("multipleNoteSelect").value;
+		let useClockCyclesNotation = document.getElementById("clockNotationFlag").checked;
+		let convertText = document.getElementById("commentsFlag").checked;
+		let deleteEmptyTracks = document.getElementById("noEmptyTracksFlag").checked;
+		let createTempoMap = false; //document.getElementById("tempoMapFlag").checked;
+		let debugMode = document.getElementById("debugFlag").checked;
+		if (document.getElementById("clearLogsFlag").checked) clearLogs();
+		
+		//Instrument data
+		let pmdInstrument = "@101 4 7 28 0 8 0 3 32 2 12 3 0 0 26 10 7 6 2 0 1 4 3 0 0 28 0 8 0 3 30 2 12 7 0 0 26 10 7 6 2 0 1 4 7 0 0";
+		
+		//Constants
+		const ticks_per_smallest = ticksPerQuarterNote * 4 / pmd_default_noteLength;
+		
+		//Data
+		let cursor = 8 + headerChunkLength;
+		let previousEventType = 0;
+		let currentTrackMIDI = 0;
+		let currentTrackPMD = 1;
+		let drumChannels = 0;
+		let currentDrumPlayed = 0;
+		let midiTicks = 0; //Clock
+		let mmlPlayingNotes = []; //2D array of notes being played + time stamps + velocities + currentActiveNote
+		let currentOctave = 0;
+		let currentVelocity = 0;
+		let currentTrackVolume = 127;
+		let currentTrackPan = 0; //-128 to 127
+		let restTime = 0; //For calculating rest length
+		let lockTicks = 0; //For preventing desyncs
+		let discardTrack = false;
+		
+		//For looping
+		let trackCursorEnd = []; //End of each MML track in the MML string
+		let midiTrackTime = []; //Time at end of each MIDI track
+		let songLength = 0;
+		
+		//For deletion of empty tracks & creation of tempo map
+		let trackIsEmpty = false;
+		let trackCursorStart = []; //Start of each MIDI track in the MML string
+		let tempoMap = []; //2D array of new tempo + time stamps
+		let mmlTrack = []; //Map of which MIDI track represents which MML track
+		
+		//For automatically setting the tempo
+		let mmlTempo = 0;
+		let mmlTempoStart = 0;
+		let mmlTempoEnd = 0;
+		
+		
+		let mmlFile = "";
+		mmlFile += "#Title		" + formatString(file.name.substring(0, file.name.length - 4)) + "\r\n";
+		mmlFile += "#Option		/v/c" + "\r\n";
+		mmlFile += "#Filename	.M2" + "\r\n";
+		mmlTempoStart = mmlFile.length;
+		mmlFile += getTempoString(tempoMidiToPmd(midi_default_tempo));
+		mmlTempoEnd = mmlFile.length;
+		mmlFile += "#DT2Flag	on" + "\r\n" + "\r\n";
+		mmlFile += pmdInstrument + "\r\n";
+		
+		try {
+			for (let i = 0; i < trackChunkLength.length; i++){
+				currentTrackMIDI++;
+				discardTrack = false;
+				
+				//If we aren't converting all tracks and we already converted 8 non-drum tracks...
+				if (convertAllTracks == false && mmlTrack.length - drumChannels >= 8){
+					//If we haven't converted the drums yet, do it
+					if (drumChannels == 0 && (drumOption == "specific" || drumOption == "largest")){
+						if (currentTrackMIDI != drumTrackMIDI)
+							discardTrack = true;
+					}
+					else{
+						log("More tracks were found, but PMD MML only support up to 8 tracks (plus drums). The remaining tracks are discarded.", "orange");
+						break;
+					}
+				}
+				
+				updateProgress();
+				cursor += 8;
+				midiTicks = 0;
+				restTime = 0;
+				lostTicks = 0;
+				trackIsEmpty = deleteEmptyTracks;
+				mmlPlayingNotes = [];
+				currentDrumPlayed = 0;
+				currentOctave = 0;
+				currentVelocity = pmd_default_velocity;
+				currentTrackVolume = 127;
+				currentTrackPan = 0;
+				
+				if (loopSong)
+					midiTrackTime.push(0);
+				
+				trackCursorStart.push(mmlFile.length);
+				
+				if (discardTrack == false){
+					log("Track #" + currentTrackMIDI.toString() + " (" + trackChunkLength[currentTrackMIDI - 1].toString() + " bytes)", "cyan");
+					log("[Converting into " + getTrackType() + " channel]", "cyan");
+				}
+				
+				while(await readMidiEvent()){}
+				finalizeTrack();
+			}
+			finalizeFile();
+		}
+		catch(e) {
+			error(e.message);
+		}
+		settings.style.display = 'block';
+		progress.style.display = 'none';
+		
+		//Reads a MIDI event
+		async function readMidiEvent(){
+			let buffer = new Uint8Array(await readFileAsync(file.slice(cursor, cursor + 4)));
+			
+			let array;
+			try{
+				array = variableLengthValue(buffer);
+			}
+			catch{
+				throw new Error("Something bad happened while trying to convert variable-length quantities.");
+			}
+			midiTicks += array[0];
+			cursor += array[1] + 1;
+			
+			if (debugMode && array[0] != 0) log("Delta-time: " + array[0].toString(), "yellow");
+			
+			buffer = new Uint8Array(await readFileAsync(file.slice(cursor, cursor + 3)));
+			
+			let eventType = (buffer[0] >> 4) - 8;
+			
+			//If event type is omitted: same as previous event
+			if (buffer[0] < 128){ 
+				eventType = previousEventType;
+				buffer[2] = buffer[1];
+				buffer[1] = buffer[0];
+				cursor -= 1;
+			}
+			
+			switch (eventType){
+				case 0: //Note Off
+					releaseNote(buffer[1], true);
+					cursor += 3;
+					break;
+				case 1: //Note On
+					if (buffer[2] == 0){ //Note On with a velocity of 0 has the same function as Note Off
+						releaseNote(buffer[1], true);
+					} 
+					else {
+						addNote(buffer[1], buffer[2]);
+					}
+					cursor += 3;
+					break;
+				case 2: //Polyphonic Key Pressure (NOT SUPPORTED)
+					cursor += 3;
+					break;
+				case 3: //Control Change
+					//TODO there's other things that might be convertable e.g. modulation
+					switch(buffer[1]){
+						case 0x07: //Channel Volume MSB (NOT SUPPORTED)
+						case 0x27: //Channel Volume LSB
+							//Valid values must be between 0-127
+							if (buffer[2] > 127)
+								break;
+							currentTrackVolume = buffer[2];
+							break;
+						case 0x0A: //Pan MSB (NOT SUPPORTED)
+						case 0x2A: //Pan LSB
+							//SSG doesn't support panning
+							if (getTrackType() == "SSG")
+								break;
+							
+							//Valid values must be between 0-127
+							if (buffer[2] > 127)
+								break;
+							
+							//MIDI is 0 to 127; PMD is -128 to +127
+							let pan = (buffer[2] * 2) - 128;
+							
+							if (pan != currentTrackPan){
+								currentTrackPan = pan;
+								if (discardTrack == false){
+									ready_up_track();
+									mmlFile += "px" + pan.toString();
+								}
+							}
+							break;
+						default: //Everything else (NOT SUPPORTED)
+							break;
+					}
+					cursor += 3;
+					break;
+				case 4: //Program Change
+					//TODO maybe notify the user in some way that there is an instrument change at this point in time
+					cursor += 2;
+					break;
+				case 5: //Channel Pressure (NOT SUPPORTED)
+					cursor += 2;
+					break;
+				case 6: //Pitch Wheel Change (NOT SUPPORTED)
+					cursor += 3;
+					break;
+				case 7:
+					switch (buffer[0]){
+						case 0xF0: //System Exclusive Message (NOT SUPPORTED)
+							cursor += 2 + buffer[1];
+							break;
+						case 0xF2: //Song Position Pointer (NOT SUPPORTED)
+							cursor += 3;
+							break;
+						case 0xF3: //Song Select (NOT SUPPORTED)
+							cursor += 2;
+							break;
+						case 0xFF: //Meta-Event
+							switch(buffer[1]){
+								case 0x00: //Sequence Number (NOT SUPPORTED)
+									cursor += 3;
+									break;
+								case 0x01: //Text Event
+								case 0x02: //Copyright Notice
+								case 0x03: //Sequence/Track Name
+								case 0x04: //Instrument Name
+								case 0x05: //Lyric
+								case 0x06: //Marker
+								case 0x07: //Cue Point
+								case 0x08: //Program Name
+									if (discardTrack == false){
+										let textBuffer = new Uint8Array(await readFileAsync(file.slice(cursor + 3, cursor + 3 + buffer[2])));
+										//Convert shift_jis text to UTF-8
+										let decoder = new TextDecoder("shift-jis");
+										let decodedText = decoder.decode(textBuffer);
+										//TODO what if the MIDI uses an encoding that isn't shift_jis?
+										//TODO what if the text contains line breaks?
+										
+										if (debugMode)
+											log("Text: " + decodedText, "white");
+										
+										if (convertText && decodedText != ""){
+											if (mmlFile.charAt(mmlFile.length - 1) != '\n')
+												mmlFile += "\r\n";
+											
+											mmlFile += ";" + decodedText + "\r\n";
+										}
+									}
+									
+									cursor += buffer[2] + 3;
+									break;
+								case 0x20: //MIDI Channel Prefix (NOT SUPPORTED)
+									//TODO figure out what this does & if it affects anything
+									cursor += 4;
+									break;
+								case 0x21: //Port Prefix (NOT SUPPORTED)
+									cursor += 4;
+									break;
+								case 0x2F: //End of Track
+									//Note: we are assuming this is ALWAYS the last event in a track
+									if (discardTrack == false)
+										log("End of Track", "yellow");
+									cursor += 3;
+									return false;
+								case 0x51: //Set Tempo
+									if (discardTrack){
+										cursor += 6;
+										break;
+									}
+									
+									if (mmlTempo != 0){
+										if (debugMode) log("Tempo change discarded", "orange");
+										cursor += 6;
+										break;
+									}
+									
+									let tempoBuffer = new Uint8Array(await readFileAsync(file.slice(cursor + 3, cursor + 6)));
+									let tempo = (tempoBuffer[0] << 16) + (tempoBuffer[1] << 8) + tempoBuffer[2];
+									tempo = Math.round(60000000 / tempo);
+									tempo = tempoMidiToPmd(tempo);
+									if (debugMode) log("Tempo set to " + (tempo * 2).toString() + " BPM", "white");
+									
+									if (convertAllTracks == false){
+										mmlTempo = tempo;
+										cursor += 6;
+										break;
+									}
+									
+									if (createTempoMap){
+										tempoMap.push([tempo, midiTicks]);
+									} else {
+										//TODO what if the tempo is changed while notes are playing?
+										ready_up_track();
+										if (getActiveNoteIndex() == -1){
+											addRest(getRestLength(), true);
+											restTime = midiTicks;
+										}
+										mmlFile += "t" + tempo.toString();
+										trackIsEmpty = false;
+									}
+									
+									cursor += 6;
+									break;
+								case 0x54: //SMPTE Offset (NOT SUPPORTED)
+									cursor += 8;
+									break;
+								case 0x58: //Time Signature (NOT SUPPORTED)
+									//This doesn't seem to have any effect on the sounds played
+									cursor += 7;
+									break;
+								case 0x59: //Key Signature (NOT SUPPORTED)
+									//This doesn't seem to have any effect on the sounds played
+									cursor += 5;
+									break;
+								case 0x7F: //Sequencer Specific Meta-Event (NOT SUPPORTED)
+									cursor += buffer[2] + 3;
+							}
+							break;
+						default: //Everything else (NOT SUPPORTED)
+							cursor += 1;
+							break;
+					}
+			}
+			
+			if (debugMode && discardTrack == false)
+				log(getHex(buffer), "white");
+			previousEventType = eventType;
+			
+			return true;
+		}
+		
+		//Adds a note to MML
+		function releaseNote(noteNumber, deleteNote){
+			if (discardTrack)
+				return;
+			
+			//Go through array of currently-being-played notes and find the note number
+			let index = mmlPlayingNotes.findIndex(findNoteNumber);
+			function findNoteNumber(i){ return i[0] == noteNumber; }
+			if (index == -1) return; //Shouldn't happen (?)
+			
+			//If this is the active note, add it to the MML string
+			let isActiveNote = (mmlPlayingNotes[index][3] != 0)
+			
+			if (isActiveNote){
+				let noteLength = getNoteLength(mmlPlayingNotes[index][1], midiTicks);
+				let noteLengthString = getNoteLengthString(noteLength, false);
+				
+				if (debugMode) log(noteLength.toString(), "white");
+				
+				if (noteLengthString != ""){
+					if (getTrackType() == "Drums"){
+						let instrument = 0;
+						let vel = 0;
+						let startTime = mmlPlayingNotes[index][1];
+						while (mmlPlayingNotes.length > 0){
+							if (mmlPlayingNotes[0][0] >= 35 && mmlPlayingNotes[0][0] <= 81){
+								let currentInstrument = pmdDrumMap[mmlPlayingNotes[0][0] - 35];
+								instrument = instrument | currentInstrument;
+								
+								//Take the highest velocity that you can find
+								if ((currentInstrument != 0) && (mmlPlayingNotes[0][2] > vel))
+									vel = mmlPlayingNotes[0][2];
+							}
+							mmlPlayingNotes.splice(0, 1);
+						}
+						if (instrument > 0){
+							ready_up_track();
+							updateVelocity(vel);
+							mmlFile += (instrument == currentDrumPlayed ? "" : "@" + instrument.toString()) + "c" + noteLengthString;
+							currentDrumPlayed = instrument;
+							midiTrackTime[currentTrackMIDI - 1] += noteLength;
+							updateLostTicks(startTime, midiTicks);
+							trackIsEmpty = false;
+						}
+						else{
+							//Shouldn't happen anymore, but just in case
+							addRest(noteLength, true);
+						}
+					}
+					else{
+						ready_up_track();
+						let noteData = getMidiNoteInfo(noteNumber, false);
+						updateOctave(noteData[1]);
+						updateVelocity(mmlPlayingNotes[index][2]);
+						mmlFile += noteData[0] + noteLengthString;
+						midiTrackTime[currentTrackMIDI - 1] += noteLength;
+						updateLostTicks(mmlPlayingNotes[index][1], midiTicks);
+						trackIsEmpty = false;
+					}
+				}
+			}
+			
+			//Remove the note from the list, if requested
+			if (deleteNote && getTrackType() != "Drums")
+				mmlPlayingNotes.splice(index, 1);
+			
+			//If there is not an active note, store the start time for the next rest note
+			if (isActiveNote && getActiveNoteIndex() == -1)
+				restTime = midiTicks;
+		}
+		
+		//Does everything that needs to be done when a new note starts playing
+		function addNote(noteNumber, noteVelocity){
+			if (discardTrack)
+				return;
+			
+			let activeNoteIndex = getActiveNoteIndex();
+			let noteState = 1;
+			
+			if(activeNoteIndex == -1){
+				addRest(getRestLength(), true);
+			}
+			else{
+				if(getTrackType() == "Drums"){
+					releaseNote(mmlPlayingNotes[0][0], false);
+				}
+				else{
+					//Another note is already playing, which is not possible with MML.
+					if (mmlPlayingNotes[activeNoteIndex][1] == midiTicks){
+						//If two or more notes started playing at the same time, choose which one to keep
+						switch(multipleNoteChoice){
+							case "high":
+								//Play the highest note found (discard the new note if it is lower)
+								if (noteNumber <= mmlPlayingNotes[activeNoteIndex][1]){
+									discardTheNewNote();
+								}
+								else{
+									discardTheOldNote();
+								}
+								break;
+							case "low":
+								//Play the lowest note found (discard the new note if it is higher)
+								if (noteNumber >= mmlPlayingNotes[activeNoteIndex][1]){
+									discardTheNewNote();
+								}
+								else{
+									discardTheOldNote();
+								}
+								break;
+							case "first":
+								//Play the first note found (always discard the new note)
+								discardTheNewNote();
+								break;
+							case "last":
+								//Play the last note found (always discard the old note)
+								discardTheOldNote();
+								break;
+							default:
+								//Should not happen, but just in case...
+								discardTheOldNote();
+								break;
+						}
+					}
+					else{
+						//Otherwise, play the new note
+						discardTheOldNote();
+					}
+				}
+			}
+			
+			mmlPlayingNotes.push([noteNumber, midiTicks, noteVelocity, noteState]);
+			
+			function discardTheNewNote(){
+				noteState = 0;
+			}
+			function discardTheOldNote(){
+				releaseNote(mmlPlayingNotes[activeNoteIndex][0], false);
+				mmlPlayingNotes[activeNoteIndex][3] = 0;
+			}
+		}
+		
+		//Returns the index of the current active note (-1 if there is no active note)
+		function getActiveNoteIndex(){
+			return mmlPlayingNotes.findIndex(findActiveNote);
+			function findActiveNote(i) { return i[3] != 0; }
+		}
+		
+		//Appends a rest string to the MML file
+		function addRest(noteLength, lostTicksFlag){
+			let restString = getNoteLengthString(noteLength, true);
+			if (restString != ""){
+				ready_up_track();
+				mmlFile += restString;
+				midiTrackTime[currentTrackMIDI - 1] += noteLength;
+			}
+			if (lostTicksFlag){
+				updateLostTicks(restTime, midiTicks);
+			}
+		}
+		
+		//Counts the number of ticks lost and adds rest notes when needed (keeps everything synced)
+		function updateLostTicks(start, end){
+			let ticksLost = getLostTicks(start, end);
+			if (ticksLost > 0){
+				lostTicks += ticksLost;
+				if (debugMode) log("Lost ticks: " + lostTicks.toString(), "white");
+				if (lostTicks >= ticks_per_smallest){
+					if (debugMode) log("Adding a rest to resync the track.", "yellow");
+					lostTicks -= ticks_per_smallest;
+					addRest(1, false);
+				}
+			}
+		}
+		
+		//Returns the rest length
+		function getRestLength(){
+			return getNoteLength(restTime, midiTicks);
+		}
+		
+		//Returns a valid note length
+		function getNoteLength(start, end){
+			let d = end - start;
+			if (d <= 0) return 0;
+			return Math.floor(d / ticks_per_smallest);
+		}
+		
+		//Returns a note length string that can be used in MML
+		function getNoteLengthString(noteLength, isRest){
+			let result = "";
+			let d = noteLength;
+			
+			//Clock cycle notation
+			if(useClockCyclesNotation && (isRest == false && d > 255) == false){
+				if (d <= 0)
+					return result;
+				
+				if (isRest){
+					//Turn long rests into a loop (e.g. "[r1]69")
+					if (d >= pmd_default_noteLength + pmd_default_noteLength){
+						let c = (d - (d % pmd_default_noteLength)) / pmd_default_noteLength;
+						result += "[r1]" + c.toString();
+						d = d % pmd_default_noteLength;
+						
+						if (d == 0)
+							return result;
+					}
+					else if (d > 255){
+						result += "r1";
+						d -= pmd_default_noteLength;
+					}
+					result += "r";
+				}
+				
+				//...except for 1 or 2 digit note lengths, where it's better to use normal notation
+				if ((pmd_default_noteLength % d == 0) && (pmd_default_noteLength < d * 100)){
+					return result + (pmd_default_noteLength / d).toString();
+				}
+				
+				return result + "%" + d.toString();
+			}
+			
+			//Normal notation
+			for (let i = pmd_default_noteLength; i >= 1; i--){
+				if (d <= 0) break;
+				if (pmd_default_noteLength % i != 0) continue;
+				if (d >= i){
+					if (isRest){
+						if (d >= i + i){
+							let c = (d - (d % i)) / i; //"If there's more than one, then just how many are there?"
+							result += "[r" + (pmd_default_noteLength / i).toString() + "]" + c.toString();
+							d -= i * c;
+						}
+						else{
+							result += "r" + (pmd_default_noteLength / i).toString();
+							d -= i;
+						}
+					}
+					else{
+						if (result != ""){
+							//The drums channel cannot use tie slurs
+							result += ((getTrackType() == "Drums") ? "r" : "&x");
+						}
+						result += (pmd_default_noteLength / i).toString();
+						d -= i;
+						i++;
+					}
+				}
+			}
+			return result;
+		}
+		
+		//Updates octave value, if applicable
+		function updateOctave(octave){
+			if (octave < 1 || octave > 8){
+				log("Warning: found a note whose pitch is out of bounds. The note will be moved to the closest possible octave.", "orange");
+				if (octave < 1) octave = 1;
+				if (octave > 8) octave = 8;
+			}
+			if (currentOctave == 0){
+				mmlFile += "o" + octave.toString();
+				currentOctave = octave;
+			}
+			else if (currentOctave != octave){
+				let d = ((octave > currentOctave) ? (octave - currentOctave) : (currentOctave - octave));
+				let s = ((octave > currentOctave) ? ">" : "<");
+				while (d > 0){
+					mmlFile += s;
+					d--;
+				}
+				currentOctave = octave;
+			}
+		}
+		
+		//Updates velocity value, if applicable
+		function updateVelocity(vel){
+			if (getTrackType() == "Drums"){
+				vel = Math.floor(vel / 2);
+				
+			}
+			else{
+				vel = Math.floor(vel / 8);
+			}
+			vel = Math.round(vel * currentTrackVolume / 127); //Apply channel volume
+			if (currentVelocity != vel){
+				ready_up_track();
+				mmlFile += (getTrackType() == "Drums" ? "\\V" : "v") + vel.toString();
+				currentVelocity = vel;
+			}
+		}
+		
+		//Converts a MIDI tempo to a valid PMD tempo
+		function tempoMidiToPmd(tempo){
+			let a = (tempo - (tempo % 2)) / 2;
+			
+			let result = a;
+			let outOfRange = false;
+			if (a < 18){
+				result = 18;
+				outOfRange = true;
+			}
+			if (a > 255){
+				result = 255;
+				outOfRange = true;
+			}
+			if (outOfRange){
+				log("Warning: new tempo (" + a.toString() + ") is out of bounds. It will be set to the nearest possible tempo (" + result.toString() + ").", "orange");
+			}
+			
+			return result;
+		}
+		
+		//Returns the current track type (FM, SSG, Drums)
+		function getTrackType(){
+			switch (drumOption){
+				case "none":
+					break;
+				case "all":
+					return "Drums";
+					break;
+				case "largest":
+				case "specific":
+					if (currentTrackMIDI == drumTrackMIDI)
+						return "Drums";
+			}
+			
+			if (convertAllTracks == false && currentTrackPMD - drumChannels > 6)
+				return "SSG";
+			
+			return "FM";
+		}
+		
+		//Makes a new line with the track letter
+		function ready_up_track(){
+			if (mmlFile.charAt(mmlFile.length - 1) == '\n'){
+				switch(getTrackType()){
+					case "FM":
+						mmlFile += trackLetter(currentTrackPMD) + " @101 ";
+						break;
+					case "SSG":
+						mmlFile += trackLetter(currentTrackPMD) + " @4 ";
+						break;
+					case "Drums":
+						//TODO fix bug: when a comment is added to the drums, this line gets run again, creating multiple "R0"s
+						mmlFile += "K R0\r\nR0 ";
+						break;
+				}
+			}
+		}
+		
+		//Returns the number of ticks lost to PMD MML's limitations
+		function getLostTicks(start, end){
+			let d = end - start;
+			if (d <= 0) return 0;
+			return d % ticks_per_smallest;
+		}
+		
+		//Takes a track number and returns its PMD MML track letter from A to H
+		function trackLetter(trackNumber){
+			if (getTrackType() == "Drums") return "K";
+			if (convertAllTracks) return "A";
+			if (trackNumber == 0) throw new Error("Track number cannot be zero.");
+			if (trackNumber - drumChannels > 8) throw new Error("PMD MML only supports up to 8 tracks (plus drums).");
+			return String.fromCharCode(64 + trackNumber - drumChannels);
+		}
+		
+		//Takes an array of numbers in VARIABLE-LENGTH QUANTITY form and returns the represented number
+		function variableLengthValue(values){
+			if (values.length != 4) throw new Error("Variable-length value function did not receive 4 values."); //Please send exactly four words
+			
+			let number = 0;
+			let i = 0;
+			for (i = 0; i < 4; i++){
+				if (values[i] < 128){
+					number += values[i];
+					break;
+				}
+				else{
+					number = (number + (values[i] - 128)) << 7;
+				}
+				if (i == 3) throw new Error("Values received in variable-length value function are invalid.");
+			}
+			return [number, i];
+		}
+		
+		//Remove bad characters from a string
+		function formatString(s){
+			let result = "";
+			for (let i = 0; i < s.length; i++){
+				let c = s.charCodeAt(i);
+				if (c >= 0x20 && c <= 0x7F) result += s.substring(i, i + 1);
+			}
+			return result;
+		}
+		
+		//Returns the tempo string to be used as a control command
+		function getTempoString(tempo){
+			return "#Tempo		" + tempo.toString() + "\r\n";
+		}
+		
+		//Finalize a track
+		function finalizeTrack(){
+			if (discardTrack)
+				return;
+			
+			if (trackIsEmpty){
+				let trackString = mmlFile.slice(trackCursorStart[currentTrackMIDI - 1]);
+				mmlFile = mmlFile.slice(0, trackCursorStart[currentTrackMIDI - 1]);
+				let indexComment = -1;
+				let indexLineBreak = -1;
+				//Let's delete the track, but keep in the comments
+				while(true){
+					//Find the first instance of a comment
+					indexComment = trackString.indexOf(";");
+					//If there is no comment: we are done
+					if (indexComment == -1) break;
+					//Delete everything before the comment
+					trackString = trackString.slice(indexComment);
+					//Find the first instance of a line break
+					indexLineBreak = trackString.indexOf("\r\n");
+					//If there is no line break (this shouldn't happen???)
+					if (indexLineBreak == -1){
+						//Save the comment, add a line break
+						mmlFile += trackString + "\r\n\r\n";
+						//We are done
+						break;
+					}
+					//Add 2 to get the index of AFTER the line break
+					indexLineBreak += 2;
+					//Save the comment
+					mmlFile += trackString.slice(0, indexLineBreak);
+					//If there is nothing else after this comment: we are done
+					if (indexLineBreak >= trackString.length){
+						mmlFile += "\r\n";
+						break;
+					}
+					//Remove the comment from our string
+					trackString = trackString.slice(indexLineBreak);
+				}
+				log("(Track is empty)", "yellow");
+				return;
+			}
+			if (loopSong){
+				ready_up_track();
+				if (midiTrackTime[currentTrackMIDI - 1] > songLength) songLength = midiTrackTime[currentTrackMIDI - 1];
+			}
+			
+			if (getTrackType() == "Drums")
+					drumChannels++;
+			
+			currentTrackPMD += 1;
+			mmlTrack.push(currentTrackMIDI);
+			trackCursorEnd.push(mmlFile.length);
+			mmlFile += "\r\n\r\n";
+			if (debugMode) log("Lost ticks at end of track: " + lostTicks.toString(), "yellow");
+		}
+		
+		//Finalize the convertion process
+		function finalizeFile(){
+			document.getElementById("progress").innerHTML = "Finalizing... (If you have enough time to read this, don't wait. Something probably went wrong.)";
+			//There will always be one excess line break; remove it
+			mmlFile = mmlFile.slice(0, mmlFile.length - 2);
+			//If the song loops, adds rest notes at the end of each MML track to ensure the tracks are synchronized
+			if (loopSong){
+				//Note: we have to go backwards because otherwise the rest notes get placed at the wrong locations
+				for(let i = mmlTrack.length - 1; i >= 0; i--){
+					currentTrackMIDI = mmlTrack[i];
+					currentTrackPMD = i;
+					if (debugMode) log("Track cursor end: " + trackCursorEnd[i].toString() + " / Track time: " + midiTrackTime[mmlTrack[i] - 1].toString(), "white");
+					if (debugMode) log("Song length: " + songLength.toString(), "white");
+					let tempString = mmlFile.substring(trackCursorEnd[i], mmlFile.length);
+					mmlFile = mmlFile.substring(0, trackCursorEnd[i]);
+					addRest(songLength - midiTrackTime[mmlTrack[i] - 1], true);
+					mmlFile += tempString;
+				}
+				let loopString = "ABCDEFGH".substring(0, mmlTrack.length - (drumOption == "none" ? 0 : 1)) + (drumOption == "none" ? "" : "K") + " L";
+				mmlFile = mmlFile.slice(0, trackCursorStart[0]) + "\r\n" + loopString + "\r\n\r\n" + mmlFile.slice(trackCursorStart[0]);
+			}
+			if (mmlTempo != 0){
+				mmlFile = mmlFile.slice(0, mmlTempoStart) + getTempoString(mmlTempo) + mmlFile.slice(mmlTempoEnd);						
+			}						
+			//document.getElementById("result").innerHTML = mmlFile;
+			document.getElementById("progress").style.display = 'none';
+			download(mmlFile, file.name.substring(0, file.name.length - 4) + ".mml", "text/plain");
+			log("Done!", "lime");
+		}
+		
+		//Function to download data to a file
+		//Source: https://stackoverflow.com/questions/13405129/javascript-create-and-save-file
+		function download(data, filename, type) {
+			var file = new Blob([data], {type: type});
+			if (window.navigator.msSaveOrOpenBlob) // IE10+
+				window.navigator.msSaveOrOpenBlob(file, filename);
+			else { // Others
+				var a = document.createElement("a"),
+                url = URL.createObjectURL(file);
+				a.href = url;
+				a.download = filename;
+				document.body.appendChild(a);
+				a.click();
+				setTimeout(function() {
+					document.body.removeChild(a);
+					window.URL.revokeObjectURL(url);  
+				}, 0); 
+			}
+		}
+		
+		//Update progress shown on screen
+		function updateProgress(){
+			document.getElementById("progress").innerHTML = "Currently working on track " + currentTrackMIDI.toString() + " / " + numberOfTracks.toString();
+		}
+    }
+	
+	//Takes a note number and returns its letter and octave
+	function getMidiNoteInfo(n, uppercase){
+		if (n < 0 || n > 127) n = 60; //Defaults to C4
+		let l = "";
+		switch (n % 12){
+			case 0:
+				l = uppercase ? "C" : "c";
+				break;
+			case 1:
+				l = uppercase ? "C+" : "c+";
+				break;
+			case 2:
+				l = uppercase ? "D" : "d";
+				break;
+			case 3:
+				l = uppercase ? "D+" : "d+";
+				break;
+			case 4:
+				l = uppercase ? "E" : "e";
+				break;
+			case 5:
+				l = uppercase ? "F" : "f";
+				break;
+			case 6:
+				l = uppercase ? "F+" : "f+";
+				break;
+			case 7:
+				l = uppercase ? "G" : "g";
+				break;
+			case 8:
+				l = uppercase ? "G+" : "g+";
+				break;
+			case 9:
+				l = uppercase ? "A" : "a";
+				break;
+			case 10:
+				l = uppercase ? "A+" : "a+";
+				break;
+			case 11:
+				l = uppercase ? "B" : "b";
+				break;
+		}
+		let o = 4;
+		let c = 12;
+		for (let i = -1; i < 10; i++){
+			if (n < c){
+				o = i;
+				break;
+			}
+			c += 12;
+		}
+		return [l, o];
+	}
+	
+	//Reads a file
+	function readFileAsync(file) {
+		return new Promise((resolve, reject) => {
+			let fr = new FileReader();
+			fr.onload = () => {
+				resolve(fr.result);
+			};
+			fr.onerror = reject;
+			fr.readAsArrayBuffer(file);
+		})
+	}
+	
+	//Logs something
+	function log(text, backColor){
+		let logs = document.getElementById("log");
+		if (logs.innerHTML == "") document.getElementById("clearLogsButton").style.display = 'block';
+		logs.innerHTML += "<p style=\"background-color: " + backColor + "\">" + text + "</p>";
+	}
+	
+	//Logs an error
+	function error(text){
+		log("Error: " + text, "red");
+		document.getElementById("progress").innerHTML = "An error occured.";
+	}
+	
+	//Clears the logs
+	function clearLogs(){
+		document.getElementById("log").innerHTML = "";
+		document.getElementById("clearLogsButton").style.display = 'none';
+	}
+	
+	//Debug function that gives string of hex values
+	function getHex(values){
+		let message = "";
+		for (let i = 0; i < values.length; i++){
+			if (message != "") message = message + " ";
+			message = message + values[i].toString(16);
+		}
+		return message;
+	}
+</script>
+</body>
+</html>
